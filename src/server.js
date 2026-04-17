@@ -6,6 +6,7 @@ const util = require('util');
 const execPromise = util.promisify(exec);
 const { createBranchAndPR } = require('./git');
 const { logEntry } = require('./logger');
+const { withRetry } = require('./retry');
 
 const IS_WIN = process.platform === 'win32';
 
@@ -112,26 +113,36 @@ app.post('/api/create-job', async (req, res) => {
   logEntry('ai-coding-agent', task, 'received');
   logEntry(jobId, ticketId, task, 'received', { context });
 
-  // ── 1. Call Copilot CLI ──────────────────────────────────────────────────
-  let copilotRaw;
-  try {
-    const safeTask = task.replace(/"/g, '\\"');
-    // Quote the binary only on Windows (WSL/Linux copilot is a plain command)
+  // ── 1. Call Copilot CLI (with intelligent retry) ─────────────────────────
+  const copilotResult = await withRetry(async (attempt) => {
+    // Build prompt — inject error context so Copilot avoids repeating failures
+    let prompt = task;
+    if (attempt.previousErrors.length > 0) {
+      const avoidList = attempt.failedApproaches.join(', ');
+      const lastErr = attempt.previousErrors[attempt.previousErrors.length - 1].error;
+      prompt = `${task}\n\nIMPORTANT: Previous attempt failed with: ${lastErr}\nDo NOT repeat these approaches: ${avoidList}\nTry a different strategy.`;
+    }
+
+    const safeTask = prompt.replace(/"/g, '\\"').replace(/\n/g, ' ');
     const bin = IS_WIN ? `"${COPILOT_CMD}"` : COPILOT_CMD;
     const cmd = `${bin} -p "${safeTask}" --allow-all-tools --output-format json`;
-    console.log(`[${jobId}] Running: ${cmd.slice(0, 120)}...`);
+    console.log(`[${jobId}] Attempt ${attempt.number}: ${cmd.slice(0, 120)}...`);
+
     const { stdout } = await execPromise(cmd, { timeout: 60_000, shell: true });
-    copilotRaw = stdout;
     fs.writeFileSync(path.join(WORKSPACE, `${jobId}.output.json`), stdout);
-    console.log(`[${jobId}] Copilot completed`);
-    logEntry(jobId, ticketId, task, 'copilot-complete');
-  } catch (err) {
-    const reason = err.killed ? 'Copilot CLI timed out after 60s' : err.message;
-    console.error(`[${jobId}] Copilot error: ${reason}`);
+    console.log(`[${jobId}] Copilot completed (attempt ${attempt.number})`);
+    return { success: true, data: stdout };
+  });
+
+  if (!copilotResult.success) {
+    console.error(`[${jobId}] All Copilot retries exhausted`);
     logEntry('ai-coding-agent', task, 'error');
-    logEntry(jobId, ticketId, task, 'copilot-error', { error: reason });
-    return res.status(500).json({ status: 'error', jobId, message: reason });
+    logEntry(jobId, ticketId, task, 'copilot-error', copilotResult.escalation);
+    return res.status(500).json({ status: 'error', jobId, ...copilotResult.escalation });
   }
+
+  const copilotRaw = copilotResult.data;
+  logEntry(jobId, ticketId, task, 'copilot-complete');
 
   // ── 2. Extract code → save to project ROOT (not workspace/) ─────────────
   const { code, ext } = extractCode(copilotRaw);

@@ -1,8 +1,6 @@
 node_modules/
 logs/
 workspace/
-*_solution.py
-*_solution.js
 *.output.json
 *.task.json
 .env

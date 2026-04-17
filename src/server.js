@@ -6,11 +6,20 @@ const util = require('util');
 const execPromise = util.promisify(exec);
 const { createBranchAndPR } = require('./git');
 
-// Enrich PATH so child processes can find gh and copilot
-const GH_PATH   = 'C:\\Program Files\\GitHub CLI';
-const COPILOT_BAT = process.env.COPILOT_PATH ||
-  'c:\\Users\\amith\\AppData\\Roaming\\Code\\User\\globalStorage\\github.copilot-chat\\copilotCli\\copilot.bat';
-process.env.PATH = `${GH_PATH};${process.env.PATH}`;
+const IS_WIN = process.platform === 'win32';
+
+// Resolve copilot binary — works on Windows (copilot.bat) and Linux/WSL (copilot)
+const COPILOT_CMD = process.env.COPILOT_PATH || (
+  IS_WIN
+    ? 'c:\\Users\\amith\\AppData\\Roaming\\Code\\User\\globalStorage\\github.copilot-chat\\copilotCli\\copilot.bat'
+    : 'copilot'
+);
+
+// Resolve gh binary path
+const GH_EXTRA_PATH = IS_WIN ? 'C:\\Program Files\\GitHub CLI' : '/usr/local/bin';
+process.env.PATH = `${GH_EXTRA_PATH}${IS_WIN ? ';' : ':'}${process.env.PATH}`;
+
+console.log(`[boot] Platform: ${process.platform} | copilot: ${COPILOT_CMD}`);
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -105,8 +114,9 @@ app.post('/api/create-job', async (req, res) => {
   let copilotRaw;
   try {
     const safeTask = task.replace(/"/g, '\\"');
-    // Use full path to copilot.bat to avoid PATH issues in child process
-    const cmd = `"${COPILOT_BAT}" -p "${safeTask}" --allow-all-tools --output-format json`;
+    // Quote the binary only on Windows (WSL/Linux copilot is a plain command)
+    const bin = IS_WIN ? `"${COPILOT_CMD}"` : COPILOT_CMD;
+    const cmd = `${bin} -p "${safeTask}" --allow-all-tools --output-format json`;
     console.log(`[${jobId}] Running: ${cmd.slice(0, 120)}...`);
     const { stdout } = await execPromise(cmd, { timeout: 60_000, shell: true });
     copilotRaw = stdout;

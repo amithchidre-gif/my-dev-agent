@@ -2,8 +2,9 @@ const { exec } = require('child_process');
 const util = require('util');
 const execPromise = util.promisify(exec);
 
-// Full path to gh.exe to avoid PATH issues in child processes
-const GH = process.env.GH_PATH || 'C:\\Program Files\\GitHub CLI\\gh.exe';
+// Full path to gh — works on Windows and Linux/WSL
+const IS_WIN = process.platform === 'win32';
+const GH = process.env.GH_PATH || (IS_WIN ? 'C:\\Program Files\\GitHub CLI\\gh.exe' : 'gh');
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -119,12 +120,15 @@ async function createBranchAndPR({ ticketId, task, jobId, codeFileName, root }) 
     `## Job ID: ${jobId}`,
   ].join('\n');
 
-  // Pass enriched PATH so gh.exe is always findable in child processes
-  const enrichedEnv = {
-    ...process.env,
-    PATH: `C:\\Program Files\\GitHub CLI;${process.env.PATH}`,
-  };
-  const run = (cmd) => execPromise(cmd, { cwd: root, timeout: 30_000, env: enrichedEnv, shell: true });
+// Pass enriched PATH so gh is always findable in child processes
+    const ghExtraPath = IS_WIN ? 'C:\\Program Files\\GitHub CLI' : '/usr/local/bin';
+    const pathSep     = IS_WIN ? ';' : ':';
+    const enrichedEnv = {
+      ...process.env,
+      PATH: `${ghExtraPath}${pathSep}${process.env.PATH}`,
+    };
+    const shell = IS_WIN ? true : '/bin/sh';
+    const run = (cmd) => execPromise(cmd, { cwd: root, timeout: 30_000, env: enrichedEnv, shell });
 
   try {
     await ensureGitUser(root);

@@ -5,6 +5,7 @@ const { exec } = require('child_process');
 const util = require('util');
 const execPromise = util.promisify(exec);
 const { createBranchAndPR } = require('./git');
+const { logEntry } = require('./logger');
 
 const IS_WIN = process.platform === 'win32';
 
@@ -108,6 +109,7 @@ app.post('/api/create-job', async (req, res) => {
   }
 
   console.log(`[${jobId}] Task: ${task} | Ticket: ${ticketId}`);
+  logEntry('ai-coding-agent', task, 'received');
   logEntry(jobId, ticketId, task, 'received', { context });
 
   // ── 1. Call Copilot CLI ──────────────────────────────────────────────────
@@ -126,6 +128,7 @@ app.post('/api/create-job', async (req, res) => {
   } catch (err) {
     const reason = err.killed ? 'Copilot CLI timed out after 60s' : err.message;
     console.error(`[${jobId}] Copilot error: ${reason}`);
+    logEntry('ai-coding-agent', task, 'error');
     logEntry(jobId, ticketId, task, 'copilot-error', { error: reason });
     return res.status(500).json({ status: 'error', jobId, message: reason });
   }
@@ -143,6 +146,7 @@ app.post('/api/create-job', async (req, res) => {
   const gitResult = await createBranchAndPR({ ticketId, task, jobId, codeFileName, root: ROOT });
 
   if (!gitResult.success) {
+    logEntry('ai-coding-agent', task, 'error');
     logEntry(jobId, ticketId, task, 'git-error', { error: gitResult.error });
     return res.status(207).json({
       status: 'partial',
@@ -153,6 +157,8 @@ app.post('/api/create-job', async (req, res) => {
   }
 
   logEntry(jobId, ticketId, task, 'completed', { branch: gitResult.branch, prUrl: gitResult.prUrl });
+
+  logEntry('ai-coding-agent', task, 'completed');
 
   return res.json({
     status: 'completed',

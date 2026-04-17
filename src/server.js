@@ -6,6 +6,12 @@ const util = require('util');
 const execPromise = util.promisify(exec);
 const { createBranchAndPR } = require('./git');
 
+// Enrich PATH so child processes can find gh and copilot
+const GH_PATH   = 'C:\\Program Files\\GitHub CLI';
+const COPILOT_BAT = process.env.COPILOT_PATH ||
+  'c:\\Users\\amith\\AppData\\Roaming\\Code\\User\\globalStorage\\github.copilot-chat\\copilotCli\\copilot.bat';
+process.env.PATH = `${GH_PATH};${process.env.PATH}`;
+
 const app = express();
 const PORT = process.env.PORT || 3002;
 
@@ -98,8 +104,11 @@ app.post('/api/create-job', async (req, res) => {
   // ── 1. Call Copilot CLI ──────────────────────────────────────────────────
   let copilotRaw;
   try {
-    const cmd = `copilot -p "${task.replace(/"/g, '\\"')}" --allow-all-tools --output-format json`;
-    const { stdout } = await execPromise(cmd, { timeout: 60_000 });
+    const safeTask = task.replace(/"/g, '\\"');
+    // Use full path to copilot.bat to avoid PATH issues in child process
+    const cmd = `"${COPILOT_BAT}" -p "${safeTask}" --allow-all-tools --output-format json`;
+    console.log(`[${jobId}] Running: ${cmd.slice(0, 120)}...`);
+    const { stdout } = await execPromise(cmd, { timeout: 60_000, shell: true });
     copilotRaw = stdout;
     fs.writeFileSync(path.join(WORKSPACE, `${jobId}.output.json`), stdout);
     console.log(`[${jobId}] Copilot completed`);

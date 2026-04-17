@@ -2,6 +2,9 @@ const { exec } = require('child_process');
 const util = require('util');
 const execPromise = util.promisify(exec);
 
+// Full path to gh.exe to avoid PATH issues in child processes
+const GH = process.env.GH_PATH || 'C:\\Program Files\\GitHub CLI\\gh.exe';
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -116,7 +119,12 @@ async function createBranchAndPR({ ticketId, task, jobId, codeFileName, root }) 
     `## Job ID: ${jobId}`,
   ].join('\n');
 
-  const run = (cmd) => execPromise(cmd, { cwd: root, timeout: 30_000 });
+  // Pass enriched PATH so gh.exe is always findable in child processes
+  const enrichedEnv = {
+    ...process.env,
+    PATH: `C:\\Program Files\\GitHub CLI;${process.env.PATH}`,
+  };
+  const run = (cmd) => execPromise(cmd, { cwd: root, timeout: 30_000, env: enrichedEnv, shell: true });
 
   try {
     await ensureGitUser(root);
@@ -176,7 +184,7 @@ async function createBranchAndPR({ ticketId, task, jobId, codeFileName, root }) 
     let prUrl;
     try {
       const { stdout: prOut } = await run(
-        `gh pr create --title "${safeTitle}" --body "${safeBody}" --base ${defaultBranch} --head ${featureBranch}`
+        `"${GH}" pr create --title "${safeTitle}" --body "${safeBody}" --base ${defaultBranch} --head ${featureBranch}`
       );
       prUrl = prOut.trim().split('\n').find((l) => l.startsWith('https://')) || prOut.trim();
       console.log(`[${jobId}] PR created: ${prUrl}`);

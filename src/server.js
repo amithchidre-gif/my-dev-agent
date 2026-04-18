@@ -10,18 +10,18 @@ const { withRetry } = require('./retry');
 
 const IS_WIN = process.platform === 'win32';
 
-// Resolve copilot binary — works on Windows (copilot.bat) and Linux/WSL (copilot)
-const COPILOT_CMD = process.env.COPILOT_PATH || (
+// Resolve cursor-agent binary — works on Windows (cursor-agent.exe) and Linux/WSL (cursor-agent)
+const AGENT_CMD = process.env.AGENT_PATH || (
   IS_WIN
-    ? 'c:\\Users\\amith\\AppData\\Roaming\\Code\\User\\globalStorage\\github.copilot-chat\\copilotCli\\copilot.bat'
-    : 'copilot'
+    ? 'cursor-agent.exe'
+    : 'cursor-agent'
 );
 
 // Resolve gh binary path
 const GH_EXTRA_PATH = IS_WIN ? 'C:\\Program Files\\GitHub CLI' : '/usr/local/bin';
 process.env.PATH = `${GH_EXTRA_PATH}${IS_WIN ? ';' : ':'}${process.env.PATH}`;
 
-console.log(`[boot] Platform: ${process.platform} | copilot: ${COPILOT_CMD}`);
+console.log(`[boot] Platform: ${process.platform} | agent: ${AGENT_CMD}`);
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -38,18 +38,18 @@ app.use(express.json());
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 /**
- * Copilot CLI with --output-format json returns a JSON envelope.
+ * cursor-agent with --output-format json returns a JSON envelope.
  * The actual code is embedded in markdown fenced blocks inside the
  * text fields of that JSON. This function handles both:
- *   - Raw JSON envelope from `copilot --output-format json`
+ *   - Raw JSON envelope from `cursor-agent --output-format json`
  *   - Plain text / markdown (fallback)
  */
 function extractCode(raw) {
-  // 1. Try to parse as JSON envelope (Copilot --output-format json)
+  // 1. Try to parse as JSON envelope (cursor-agent --output-format json)
   let searchTarget = raw;
   try {
     const parsed = JSON.parse(raw);
-    // The response field names vary across Copilot CLI versions;
+    // The response field names vary across cursor-agent versions;
     // try all common keys that contain the generated text
     const textContent = (
       parsed.response ||
@@ -113,9 +113,9 @@ app.post('/api/create-job', async (req, res) => {
   logEntry('ai-coding-agent', task, 'received');
   logEntry(jobId, ticketId, task, 'received', { context });
 
-  // ── 1. Call Copilot CLI (with intelligent retry) ─────────────────────────
-  const copilotResult = await withRetry(async (attempt) => {
-    // Build prompt — inject error context so Copilot avoids repeating failures
+  // ── 1. Call cursor-agent (with intelligent retry) ─────────────────────────
+  const agentResult = await withRetry(async (attempt) => {
+    // Build prompt — inject error context so cursor-agent avoids repeating failures
     let prompt = task;
     if (attempt.previousErrors.length > 0) {
       const avoidList = attempt.failedApproaches.join(', ');
@@ -124,28 +124,28 @@ app.post('/api/create-job', async (req, res) => {
     }
 
     const safeTask = prompt.replace(/"/g, '\\"').replace(/\n/g, ' ');
-    const bin = IS_WIN ? `"${COPILOT_CMD}"` : COPILOT_CMD;
-    const cmd = `${bin} -p "${safeTask}" --allow-all-tools --output-format json`;
+    const bin = IS_WIN ? `"${AGENT_CMD}"` : AGENT_CMD;
+    const cmd = `${bin} -p "${safeTask}" --print --output-format json --trust`;
     console.log(`[${jobId}] Attempt ${attempt.number}: ${cmd.slice(0, 120)}...`);
 
     const { stdout } = await execPromise(cmd, { timeout: 60_000, shell: true });
     fs.writeFileSync(path.join(WORKSPACE, `${jobId}.output.json`), stdout);
-    console.log(`[${jobId}] Copilot completed (attempt ${attempt.number})`);
+    console.log(`[${jobId}] cursor-agent completed (attempt ${attempt.number})`);
     return { success: true, data: stdout };
   });
 
-  if (!copilotResult.success) {
-    console.error(`[${jobId}] All Copilot retries exhausted`);
+  if (!agentResult.success) {
+    console.error(`[${jobId}] All cursor-agent retries exhausted`);
     logEntry('ai-coding-agent', task, 'error');
-    logEntry(jobId, ticketId, task, 'copilot-error', copilotResult.escalation);
-    return res.status(500).json({ status: 'error', jobId, ...copilotResult.escalation });
+    logEntry(jobId, ticketId, task, 'agent-error', agentResult.escalation);
+    return res.status(500).json({ status: 'error', jobId, ...agentResult.escalation });
   }
 
-  const copilotRaw = copilotResult.data;
-  logEntry(jobId, ticketId, task, 'copilot-complete');
+  const agentRaw = agentResult.data;
+  logEntry(jobId, ticketId, task, 'agent-complete');
 
   // ── 2. Extract code → save to project ROOT (not workspace/) ─────────────
-  const { code, ext } = extractCode(copilotRaw);
+  const { code, ext } = extractCode(agentRaw);
   const codeFileName = `${ticketId}_solution.${ext}`;
   const codeFilePath = path.join(ROOT, codeFileName);
 

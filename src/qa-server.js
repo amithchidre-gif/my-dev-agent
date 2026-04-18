@@ -73,9 +73,12 @@ app.post('/api/qa/run', requireApiKey, async (req, res) => {
 
   // 4. Save evidence for every stage
   let evidenceDir = null;
+  const evidenceFiles = [];
   for (const stageResult of engineResult.stages) {
     try {
-      evidenceDir = await saveEvidence(ticketId, stageResult.stage, stageResult);
+      const evidence = saveEvidence(ticketId, stageResult.stage, stageResult);
+      evidenceDir = evidence.dir;
+      evidenceFiles.push(...evidence.files);
     } catch (e) {
       console.warn(`[qa] evidence save failed for ${stageResult.stage}:`, e.message);
     }
@@ -92,7 +95,7 @@ app.post('/api/qa/run', requireApiKey, async (req, res) => {
     ticketId,
     stages:     stagesMap,
     failures:   engineResult.failures,
-    evidenceDir,
+    evidenceFiles,
     durationMs: engineResult.duration_ms,
   });
 

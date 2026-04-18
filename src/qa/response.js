@@ -9,12 +9,12 @@
  *   ticketId: string,
  *   stages: Record<string, object>,
  *   failures: Array<{ stage: string, error: string }>,
- *   evidenceDir: string|null,
+ *   evidenceFiles: string[],
  *   durationMs: number,
  * }} params
  * @returns {object}
  */
-function buildResponse({ ticketId, stages, failures, evidenceDir, durationMs }) {
+function buildResponse({ ticketId, stages, failures, evidenceFiles, durationMs }) {
   const hasFailure  = failures.length > 0;
   const hasSkipped  = Object.values(stages).some(s => s.status === 'skipped');
 
@@ -39,7 +39,7 @@ function buildResponse({ ticketId, stages, failures, evidenceDir, durationMs }) 
     status,
     stages,
     failures,
-    evidence:    evidenceDir || null,
+    evidence:    evidenceFiles.length > 0 ? evidenceFiles : null,
     duration_ms: durationMs,
     summary,
     reassign_to,

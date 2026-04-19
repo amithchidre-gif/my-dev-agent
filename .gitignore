@@ -3,5 +3,18 @@ logs/
 workspace/
 *.output.json
 *.task.json
-.env
 npm-debug.log*
+
+# Root .env is always ignored (no defaults committed)
+.env
+
+# Personal local overrides — never committed
+.env.dev.local
+.env.staging.local
+.env.local
+
+# Docker build cache artifacts
+.docker/
+
+# Evidence store (runtime output)
+evidence/

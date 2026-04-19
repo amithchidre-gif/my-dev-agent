@@ -16,11 +16,12 @@ const execAsync = util.promisify(exec);
  * @param {{ timeout?: number, cwd?: string }} opts
  * @returns {Promise<{ stdout: string, stderr: string }>}
  */
-function runWithTimeout(cmd, { timeout = 30_000, cwd = process.cwd() } = {}) {
+function runWithTimeout(cmd, { timeout = 30_000, cwd = process.cwd(), env } = {}) {
   return new Promise((resolve, reject) => {
+    const childEnv = env ? { ...process.env, ...env } : undefined;
     const child = exec(
       cmd,
-      { cwd, timeout, killSignal: 'SIGTERM', maxBuffer: 10 * 1024 * 1024 },
+      { cwd, timeout, killSignal: 'SIGTERM', maxBuffer: 10 * 1024 * 1024, ...(childEnv && { env: childEnv }) },
       (err, stdout, stderr) => {
         if (err) {
           err.stdout = stdout || '';

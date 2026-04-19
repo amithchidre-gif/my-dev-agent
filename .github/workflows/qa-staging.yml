@@ -1,0 +1,71 @@
+name: QA — Staging
+
+# Runs on every PR targeting main.
+# Spins up the staging stack, fires a smoke QA run, then tears down.
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  qa-staging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      QA_API_KEY: ${{ secrets.QA_API_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Inject the CI secret into .env.staging so docker compose picks it up
+      - name: Inject QA_API_KEY into .env.staging
+        run: |
+          sed -i "s|REPLACE_WITH_CI_SECRET|${QA_API_KEY}|g" .env.staging
+
+      - name: Build & start staging stack
+        run: |
+          docker compose -f docker-compose.staging.yml up --build -d
+
+      - name: Wait for services to be ready
+        run: |
+          echo "Waiting for agent (port 3000)..."
+          for i in $(seq 1 20); do
+            curl -sf http://localhost:3000/health && break
+            sleep 3
+          done
+          echo "Waiting for qa-agent (port 3003)..."
+          for i in $(seq 1 20); do
+            curl -sf http://localhost:3003/api/qa/status && break
+            sleep 3
+          done
+
+      - name: Run QA smoke test
+        run: |
+          curl -f -X POST http://localhost:3003/api/qa/run \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: ${QA_API_KEY}" \
+            -d '{
+              "ticketId": "CI-SMOKE-001",
+              "testType": "unit",
+              "targetPath": "src"
+            }' | tee qa-result.json
+          # Fail the step if QA reports failure
+          node -e "
+            const r = require('./qa-result.json');
+            if (r.status === 'failed') { console.error('QA FAILED:', JSON.stringify(r, null, 2)); process.exit(1); }
+            console.log('QA PASSED');
+          "
+
+      - name: Upload QA result artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-result-${{ github.run_id }}
+          path: qa-result.json
+
+      - name: Tear down staging stack
+        if: always()
+        run: |
+          docker compose -f docker-compose.staging.yml down --volumes --remove-orphans

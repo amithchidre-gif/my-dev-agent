@@ -1,0 +1,33 @@
+# docker-compose.staging.yml — Staging / PR-preview environment
+# Usage: docker compose -f docker-compose.staging.yml up --build -d
+# Ephemeral — no volume mounts; QA_API_KEY injected by CI.
+
+services:
+
+  agent:
+    build: .
+    image: ai-dev-agent:staging
+    command: node src/server.js
+    env_file: .env.staging
+    ports:
+      - "3000:3000"
+    networks:
+      - agent-net-staging
+    restart: on-failure
+
+  qa-agent:
+    build: .
+    image: ai-dev-agent:staging
+    command: node src/qa-server.js
+    env_file: .env.staging
+    ports:
+      - "3003:3003"
+    networks:
+      - agent-net-staging
+    depends_on:
+      - agent
+    restart: on-failure
+
+networks:
+  agent-net-staging:
+    driver: bridge

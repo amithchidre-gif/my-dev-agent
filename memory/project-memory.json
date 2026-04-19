@@ -1,0 +1,122 @@
+{
+  "_meta": {
+    "schema_version": "1.0.0",
+    "last_updated": "2026-04-18",
+    "description": "Canonical shared project memory. All agents read/write through src/memory.js — never edit by hand."
+  },
+
+  "project": {
+    "name": "Dev Studio",
+    "phase": "Phase 1-3",
+    "repository": "monorepo"
+  },
+
+  "tech_stack": {
+    "runtime": "Node.js 20",
+    "framework": "Express 4",
+    "containerisation": "Docker (node:20-alpine)",
+    "ci": "GitHub Actions",
+    "orchestration": "Paperclip",
+    "testing": {
+      "unit": "Vitest",
+      "integration": "Supertest",
+      "e2e": "Playwright",
+      "ai": "custom ai-validators.js + ai-tests.js"
+    }
+  },
+
+  "architecture": {
+    "style": "monorepo",
+    "agents": [
+      { "name": "Dev Agent",  "entry": "src/server.js",    "port": 3000 },
+      { "name": "QA Agent",   "entry": "src/qa-server.js", "port": 3003 }
+    ],
+    "key_modules": {
+      "engine":       "src/qa/engine.js",
+      "evidence":     "src/qa/evidence.js",
+      "response":     "src/qa/response.js",
+      "retry_guard":  "src/qa/retry-guard.js",
+      "cto_agent":    "src/qa/cto-agent.js",
+      "feedback_loop":"src/qa/feedback-loop.js",
+      "memory":       "src/memory.js"
+    }
+  },
+
+  "decisions": [
+    {
+      "id": "DEC-001",
+      "date": "2026-04-18",
+      "title": "QA agent runs on a separate port (3003)",
+      "rationale": "Keeps Dev and QA concerns independently deployable and testable.",
+      "status": "accepted"
+    },
+    {
+      "id": "DEC-002",
+      "date": "2026-04-18",
+      "title": "Strict failure-payload contract (5 required fields)",
+      "rationale": "Guarantees Dev Agent always receives machine-parseable failure data without defensive checks.",
+      "status": "accepted"
+    },
+    {
+      "id": "DEC-003",
+      "date": "2026-04-18",
+      "title": "Retry loop guard with escalation to CTO Agent",
+      "rationale": "Prevents infinite Dev↔QA loops; CTO Agent generates a structured fix ticket after max retries.",
+      "status": "accepted"
+    },
+    {
+      "id": "DEC-004",
+      "date": "2026-04-18",
+      "title": "No-progress detection in feedback loop (fingerprint comparison)",
+      "rationale": "Catches stuck loops before hitting maxCycles; triggers early CTO escalation.",
+      "status": "accepted"
+    },
+    {
+      "id": "DEC-005",
+      "date": "2026-04-18",
+      "title": "Docker multi-stage build targeting node:20-alpine with non-root user",
+      "rationale": "Minimal attack surface; non-root (appuser) satisfies container security baseline.",
+      "status": "accepted"
+    },
+    {
+      "id": "DEC-006",
+      "date": "2026-04-18",
+      "title": "Shared project memory stored in memory/project-memory.json",
+      "rationale": "Single source of truth readable by all agents at runtime; JSON for machine access, markdown synced for humans.",
+      "status": "accepted"
+    }
+  ],
+
+  "constraints": [
+    { "id": "CON-001", "constraint": "No mobile apps in Phase 1-3" },
+    { "id": "CON-002", "constraint": "No merge to main without QA pass" },
+    { "id": "CON-003", "constraint": "Max 3 QA retries before CTO escalation" },
+    { "id": "CON-004", "constraint": "QA Agent only tests Definition of Done — no scope creep" },
+    { "id": "CON-005", "constraint": "All secrets injected via environment variables — never committed" },
+    { "id": "CON-006", "constraint": "Evidence files written to ./evidence — excluded from git" }
+  ],
+
+  "environments": {
+    "dev": {
+      "branch": "dev",
+      "compose_file": "docker-compose.yml",
+      "env_file": ".env.dev",
+      "node_env": "development"
+    },
+    "staging": {
+      "branch": "main (PR preview)",
+      "compose_file": "docker-compose.staging.yml",
+      "env_file": ".env.staging",
+      "node_env": "staging",
+      "ci_trigger": "pull_request → main"
+    }
+  },
+
+  "testing_strategy": {
+    "unit":        { "tool": "Vitest",     "command": "vitest run" },
+    "integration": { "tool": "Supertest",  "command": "vitest run --config vitest.integration.config.js" },
+    "e2e":         { "tool": "Playwright", "command": "playwright test" },
+    "ai":          { "tool": "internal",   "command": "node src/qa/ai-tests.js" },
+    "max_retries": 3
+  }
+}

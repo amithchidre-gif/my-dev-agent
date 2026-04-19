@@ -7,6 +7,7 @@ const execPromise = util.promisify(exec);
 const { createBranchAndPR } = require('./git');
 const { logEntry } = require('./logger');
 const { withRetry } = require('./retry');
+const memory        = require('./memory');
 
 const IS_WIN = process.platform === 'win32';
 
@@ -178,6 +179,16 @@ app.post('/api/create-job', async (req, res) => {
     branch: gitResult.branch,
     prUrl: gitResult.prUrl,
   });
+});
+
+// ── Project Memory ───────────────────────────────────────────────────────────
+
+app.get('/api/memory', (_req, res) => {
+  try {
+    res.json(memory.get());
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
 });
 
 // ── start ─────────────────────────────────────────────────────────────────────

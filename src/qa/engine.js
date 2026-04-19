@@ -16,6 +16,8 @@
  */
 
 const path              = require('path');
+const fs                = require('fs');
+const os                = require('os');
 const { runWithTimeout } = require('./runner');
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -57,6 +59,8 @@ class TestExecutionEngine {
     this.timeout    = opts.timeout    || DEFAULT_TIMEOUT_MS;
     this.maxRetries = opts.maxRetries ?? DEFAULT_MAX_RETRIES;
     this.stopOnFail = opts.stopOnFail ?? true;
+    this.projectMemory = opts.projectMemory || '';
+    this.aiTestInput   = opts.aiTestInput   || null; // Array of test cases for ai_tests
 
     // Optional lifecycle hooks
     this._onStageStart = opts.onStageStart || (() => {});
@@ -79,6 +83,20 @@ class TestExecutionEngine {
    */
   async execute(strategies) {
     const startAll = Date.now();
+
+    // Use projectMemory to adjust behavior (e.g., max retries)
+    if (this.projectMemory) {
+      // Example: parse max retries from PROJECT_MEMORY.md rules
+      const match = this.projectMemory.match(/Max (\d+) retries/i);
+      if (match) {
+        const max = parseInt(match[1], 10);
+        if (!isNaN(max)) {
+          this.maxRetries = max;
+        }
+      }
+      // Log project context for future validation/behavior adjustment
+      console.log('[engine] PROJECT_MEMORY loaded. Rules/context will influence test execution.');
+    }
 
     // Filter & order
     const ordered = STAGE_ORDER.filter(s => strategies.includes(s));
@@ -179,11 +197,31 @@ class TestExecutionEngine {
     const cmd   = cmdFn();
     const start = Date.now();
 
+    // Prepare env overrides for ai_tests stage
+    let env = undefined;
+    let tmpInputFile = null;
+    if (stage === 'ai_tests' && this.aiTestInput) {
+      try {
+        tmpInputFile = path.join(os.tmpdir(), `ai-test-input-${Date.now()}.json`);
+        fs.writeFileSync(tmpInputFile, JSON.stringify({ cases: this.aiTestInput }));
+        env = { AI_TEST_INPUT: tmpInputFile };
+      } catch (e) {
+        console.warn('[engine] Could not write AI test input file:', e.message);
+      }
+    }
+
     try {
       const { stdout, stderr } = await runWithTimeout(cmd, {
         timeout: this.timeout,
         cwd:     this.cwd,
+        env,
       });
+
+      // Parse AI test score from structured JSON output
+      let aiScore = null;
+      if (stage === 'ai_tests') {
+        aiScore = _parseAiScore(stdout);
+      }
 
       return new StageResult({
         stage,
@@ -193,10 +231,17 @@ class TestExecutionEngine {
         stderr:  truncate(stderr, MAX_STDERR_LEN),
         command: cmd,
         duration_ms: Date.now() - start,
+        ...(aiScore && { aiScore }),
       });
     } catch (err) {
       const isTimeout =
         err.signal === 'SIGTERM' || /timed? ?out/i.test(err.message);
+
+      // Try to extract partial AI score even on failure
+      let aiScore = null;
+      if (stage === 'ai_tests') {
+        aiScore = _parseAiScore(err.stdout || '');
+      }
 
       return new StageResult({
         stage,
@@ -210,7 +255,13 @@ class TestExecutionEngine {
         command: cmd,
         duration_ms: Date.now() - start,
         timeout: isTimeout,
+        ...(aiScore && { aiScore }),
       });
+    } finally {
+      // Clean up temp file
+      if (tmpInputFile) {
+        try { fs.unlinkSync(tmpInputFile); } catch (_) {}
+      }
     }
   }
 }
@@ -228,6 +279,7 @@ class StageResult {
     this.command     = fields.command  ?? null;
     this.duration_ms = fields.duration_ms ?? 0;
     this.timeout     = fields.timeout ?? false;
+    this.aiScore     = fields.aiScore ?? null;  // AI test score { score, passed, results, summary }
     this.logs        = this._buildLogs();
   }
 
@@ -268,6 +320,7 @@ class StageResult {
       error:       this.error,
       timeout:     this.timeout,
       logs:        this.logs,
+      ...(this.aiScore && { ai_score: this.aiScore }),
     };
   }
 }
@@ -278,6 +331,28 @@ function truncate(str, max) {
   if (!str) return '';
   if (str.length <= max) return str;
   return str.slice(0, max) + `\n…(truncated ${str.length - max} chars)`;
+}
+
+/**
+ * Parse the structured JSON score from ai-tests.js stdout.
+ * The last line of stdout should be a JSON blob: { score, passed, results, summary }
+ */
+function _parseAiScore(stdout) {
+  if (!stdout) return null;
+  // Find last JSON object in stdout (ai-tests.js prints it as the final line)
+  const lines = stdout.trim().split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (line.startsWith('{') && line.endsWith('}')) {
+      try {
+        const parsed = JSON.parse(line);
+        if (typeof parsed.score === 'number' && typeof parsed.passed === 'boolean') {
+          return parsed;
+        }
+      } catch (_) { /* not valid JSON, keep searching */ }
+    }
+  }
+  return null;
 }
 
 // ── Exports ──────────────────────────────────────────────────────────────────

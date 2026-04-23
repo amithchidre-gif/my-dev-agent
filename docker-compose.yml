@@ -1,0 +1,44 @@
+# docker-compose.yml — Dev environment
+# Usage: docker compose up
+# Mounts source for live-reload; agents share a network.
+
+services:
+
+  agent:
+    build: .
+    image: ai-dev-agent:dev
+    command: node src/server.js
+    env_file: .env.dev
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app                  # live mount — changes reflected without rebuild
+      - /app/node_modules       # keep container modules isolated
+      - evidence:/app/evidence
+    networks:
+      - agent-net
+    restart: unless-stopped
+
+  qa-agent:
+    build: .
+    image: ai-dev-agent:dev
+    command: node src/qa-server.js
+    env_file: .env.dev
+    ports:
+      - "3003:3003"
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - evidence:/app/evidence
+    networks:
+      - agent-net
+    depends_on:
+      - agent
+    restart: unless-stopped
+
+volumes:
+  evidence:
+
+networks:
+  agent-net:
+    driver: bridge

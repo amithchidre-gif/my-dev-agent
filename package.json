@@ -3,7 +3,16 @@
   "version": "1.0.0",
   "main": "src/server.js",
   "scripts": {
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "start:qa": "node src/qa-server.js",
+    "dev": "cross-env NODE_ENV=development node src/server.js",
+    "dev:qa": "cross-env NODE_ENV=development node src/qa-server.js",
+    "staging": "cross-env NODE_ENV=staging node src/server.js",
+    "docker:dev": "docker compose up --build",
+    "docker:dev:detach": "docker compose up --build -d",
+    "docker:staging": "docker compose -f docker-compose.staging.yml up --build -d",
+    "docker:down": "docker compose down",
+    "docker:staging:down": "docker compose -f docker-compose.staging.yml down --volumes --remove-orphans"
   },
   "dependencies": {
     "express": "^4.18.2"

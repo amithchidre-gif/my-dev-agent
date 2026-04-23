@@ -1,0 +1,76 @@
+{
+  "lessons": [
+    {
+      "ticket_id": "AUTH-007",
+      "issue": "JWT token expired too quickly",
+      "fix": "Increased token TTL from 15min to 1 hour",
+      "lesson": "Always set token expiration based on user session requirements",
+      "category": "authentication",
+      "timestamp": "2026-04-19T12:04:52.194Z"
+    },
+    {
+      "ticket_id": "TEST-001",
+      "issue": "Playwright tests failing in CI",
+      "fix": "Added --workers=1 to avoid race conditions",
+      "lesson": "Parallel test execution can cause flaky tests in CI",
+      "category": "testing",
+      "timestamp": "2026-04-19T12:04:58.188Z"
+    },
+    {
+      "ticket_id": "FULL-FLOW-001",
+      "issue": "Element not found: button[data-testid=login]",
+      "fix": "Added data-testid attribute to login button",
+      "lesson": "Always validate authentication tokens and set appropriate expiration times. [Observed: \"Element not found: button[data-testid=login]\" → Fixed by: \"Added data-testid attribute to login button\"]",
+      "category": "auth",
+      "timestamp": "2026-04-19T12:24:46.683Z"
+    },
+    {
+      "ticket_id": "DEDUP-TEST-001",
+      "issue": "API endpoint returning 500 on invalid input",
+      "fix": "Added input validation middleware",
+      "lesson": "Always validate input before processing",
+      "category": "validation",
+      "count": 2
+    },
+    {
+      "ticket_id": "DEDUP-TEST-002",
+      "issue": "Docker container failing to start due to port conflict",
+      "fix": "Changed port mapping from 3000 to 3002",
+      "lesson": "Always check for port availability before binding",
+      "category": "docker",
+      "count": 1
+    },
+    {
+      "ticket_id": "TEST-1",
+      "issue": "Database connection failed",
+      "fix": "Increased timeout",
+      "lesson": "Lesson 1",
+      "category": "db",
+      "count": 2
+    },
+    {
+      "ticket_id": "HYBRID-TEST-001",
+      "issue": "Connection timeout in database query",
+      "fix": "Increased connection pool size",
+      "lesson": "Always monitor database connection pool",
+      "category": "database",
+      "count": 2
+    },
+    {
+      "ticket_id": "UNIQUE-TEST-002",
+      "issue": "Redis cache invalidation race condition",
+      "fix": "Added distributed lock using Redlock algorithm",
+      "lesson": "Implement comprehensive input validation for all API endpoints. [Observed: \"Redis cache invalidation race condition\" → Fixed by: \"Added distributed lock using Redlock algorithm\"]",
+      "category": "validation",
+      "count": 1
+    },
+    {
+      "ticket_id": "CATEGORY-TEST-001",
+      "issue": "JWT token expired during API request",
+      "fix": "Added token refresh middleware",
+      "lesson": "Always validate authentication tokens and set appropriate expiration times. [Observed: \"JWT token expired during API request\" → Fixed by: \"Added token refresh middleware\"]",
+      "category": "auth",
+      "count": 1
+    }
+  ]
+}

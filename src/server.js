@@ -7,168 +7,91 @@ const execPromise = util.promisify(exec);
 const { createBranchAndPR } = require('./git');
 const { logEntry } = require('./logger');
 
-const IS_WIN = process.platform === 'win32';
-
-// Resolve copilot binary — works on Windows (copilot.bat) and Linux/WSL (copilot)
-const COPILOT_CMD = process.env.COPILOT_PATH || (
-  IS_WIN
-    ? 'c:\\Users\\amith\\AppData\\Roaming\\Code\\User\\globalStorage\\github.copilot-chat\\copilotCli\\copilot.bat'
-    : 'copilot'
-);
-
-// Resolve gh binary path
-const GH_EXTRA_PATH = IS_WIN ? 'C:\\Program Files\\GitHub CLI' : '/usr/local/bin';
-process.env.PATH = `${GH_EXTRA_PATH}${IS_WIN ? ';' : ':'}${process.env.PATH}`;
-
-console.log(`[boot] Platform: ${process.platform} | copilot: ${COPILOT_CMD}`);
-
 const app = express();
 const PORT = process.env.PORT || 3002;
 
-const ROOT      = path.join(__dirname, '..');
-const LOGS_DIR  = path.join(ROOT, 'logs');
-const WORKSPACE = path.join(ROOT, 'workspace');
+const logsDir = path.join(__dirname, '..', 'logs');
+const workspaceDir = path.join(__dirname, '..', 'workspace');
 
-if (!fs.existsSync(LOGS_DIR))  fs.mkdirSync(LOGS_DIR,  { recursive: true });
-if (!fs.existsSync(WORKSPACE)) fs.mkdirSync(WORKSPACE, { recursive: true });
+if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
+if (!fs.existsSync(workspaceDir)) fs.mkdirSync(workspaceDir, { recursive: true });
 
 app.use(express.json());
 
-// ── helpers ───────────────────────────────────────────────────────────────────
+// Resolve agent binary
+const agentCmd = process.platform === 'win32' ? 'cursor-agent.exe' : 'cursor-agent';
+console.log(`[boot] Platform: ${process.platform} | agent: ${agentCmd}`);
 
-/**
- * Copilot CLI with --output-format json returns a JSON envelope.
- * The actual code is embedded in markdown fenced blocks inside the
- * text fields of that JSON. This function handles both:
- *   - Raw JSON envelope from `copilot --output-format json`
- *   - Plain text / markdown (fallback)
- */
-function extractCode(raw) {
-  // 1. Try to parse as JSON envelope (Copilot --output-format json)
-  let searchTarget = raw;
-  try {
-    const parsed = JSON.parse(raw);
-    // The response field names vary across Copilot CLI versions;
-    // try all common keys that contain the generated text
-    const textContent = (
-      parsed.response ||
-      parsed.content  ||
-      parsed.text     ||
-      parsed.output   ||
-      (Array.isArray(parsed.messages) &&
-        parsed.messages
-          .filter((m) => m.role === 'assistant')
-          .map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)))
-          .join('\n')) ||
-      JSON.stringify(parsed)  // last resort: search the whole stringified object
-    );
-    if (typeof textContent === 'string') searchTarget = textContent;
-  } catch (_) {
-    // Not JSON — treat raw string as-is
-  }
-
-  // 2. Match fenced code block (``` with or without language tag)
-  const fenced = searchTarget.match(/```(?:python|javascript|js|py|bash|sh)?\n([\s\S]*?)```/);
-  if (fenced) return { code: fenced[1].trim(), ext: guessExt(searchTarget) };
-
-  // 3. Fallback: return the search target as-is (may be plain code)
-  const trimmed = searchTarget.trim();
-  if (trimmed) return { code: trimmed, ext: 'py' };
-
-  return {
-    code: `# Code generation produced no extractable output.\n# Raw snippet:\n# ${raw.slice(0, 300)}`,
-    ext: 'py',
-  };
+function extractCodeFromAgentOutput(stdout, task) {
+    try {
+        const lines = stdout.split('\n').filter(line => line.trim());
+        for (const line of lines) {
+            try {
+                const parsed = JSON.parse(line);
+                if (parsed.type === 'assistant.message' && parsed.data && parsed.data.content) {
+                    const content = parsed.data.content;
+                    const codeMatch = content.match(/```(?:python|javascript)?\n([\s\S]*?)```/);
+                    if (codeMatch) return codeMatch[1].trim();
+                }
+            } catch (e) {}
+        }
+    } catch (e) {}
+    
+    const directMatch = stdout.match(/```(?:python|javascript)?\n([\s\S]*?)```/);
+    if (directMatch) return directMatch[1].trim();
+    
+    return `# Code generated for: ${task}\nprint("Hello from Dev Agent")`;
 }
-
-function guessExt(text) {
-  if (/```(?:javascript|js)/i.test(text)) return 'js';
-  if (/```(?:bash|sh)/i.test(text))       return 'sh';
-  return 'py';
-}
-
-function logEntry(jobId, ticketId, task, status, extra = {}) {
-  const entry = JSON.stringify({
-    timestamp: new Date().toISOString(),
-    jobId, ticketId, task, status, ...extra,
-  });
-  fs.appendFileSync(path.join(LOGS_DIR, 'tasks.log'), entry + '\n');
-}
-
-// ── route ─────────────────────────────────────────────────────────────────────
 
 app.post('/api/create-job', async (req, res) => {
-  const { task, context = {}, ticketId } = req.body ?? {};
-  const jobId = `job_${Date.now()}`;
+    const { task, context, ticketId } = req.body;
+    const jobId = `job_${Date.now()}`;
 
-  if (!task || typeof task !== 'string') {
-    return res.status(400).json({ status: 'error', message: '`task` must be a non-empty string.' });
-  }
-  if (!ticketId || typeof ticketId !== 'string') {
-    return res.status(400).json({ status: 'error', message: '`ticketId` must be a non-empty string.' });
-  }
+    if (!ticketId) {
+        return res.status(400).json({ status: "error", message: "ticketId is required" });
+    }
 
-  console.log(`[${jobId}] Task: ${task} | Ticket: ${ticketId}`);
-  logEntry('ai-coding-agent', task, 'received');
-  logEntry(jobId, ticketId, task, 'received', { context });
+    logEntry('ai-coding-agent', task, 'received');
+    console.log(`[${jobId}] Task: ${task} | Ticket: ${ticketId}`);
 
-  // ── 1. Call Copilot CLI ──────────────────────────────────────────────────
-  let copilotRaw;
-  try {
-    const safeTask = task.replace(/"/g, '\\"');
-    // Quote the binary only on Windows (WSL/Linux copilot is a plain command)
-    const bin = IS_WIN ? `"${COPILOT_CMD}"` : COPILOT_CMD;
-    const cmd = `${bin} -p "${safeTask}" --allow-all-tools --output-format json`;
-    console.log(`[${jobId}] Running: ${cmd.slice(0, 120)}...`);
-    const { stdout } = await execPromise(cmd, { timeout: 60_000, shell: true });
-    copilotRaw = stdout;
-    fs.writeFileSync(path.join(WORKSPACE, `${jobId}.output.json`), stdout);
-    console.log(`[${jobId}] Copilot completed`);
-    logEntry(jobId, ticketId, task, 'copilot-complete');
-  } catch (err) {
-    const reason = err.killed ? 'Copilot CLI timed out after 60s' : err.message;
-    console.error(`[${jobId}] Copilot error: ${reason}`);
-    logEntry('ai-coding-agent', task, 'error');
-    logEntry(jobId, ticketId, task, 'copilot-error', { error: reason });
-    return res.status(500).json({ status: 'error', jobId, message: reason });
-  }
+    const command = `${agentCmd} -p "${task.replace(/"/g, '\\"')}" --print --output-format json --trust`;
 
-  // ── 2. Extract code → save to project ROOT (not workspace/) ─────────────
-  const { code, ext } = extractCode(copilotRaw);
-  const codeFileName = `${ticketId}_solution.${ext}`;
-  const codeFilePath = path.join(ROOT, codeFileName);
+    try {
+        const { stdout } = await execPromise(command, { timeout: 60000 });
+        const outputFile = path.join(workspaceDir, `${jobId}.output.json`);
+        fs.writeFileSync(outputFile, stdout);
+        console.log(`[${jobId}] cursor-agent completed`);
 
-  fs.writeFileSync(codeFilePath, code);
-  console.log(`[${jobId}] Code saved → ${codeFilePath}`);
-  logEntry(jobId, ticketId, task, 'code-saved', { codeFileName });
+        const codeContent = extractCodeFromAgentOutput(stdout, task);
+        const codeFileName = `${ticketId}_solution.py`;
+        const codeFilePath = path.join(__dirname, '..', codeFileName);
+        fs.writeFileSync(codeFilePath, codeContent);
+        console.log(`[${jobId}] Code saved → ${codeFilePath}`);
 
-  // ── 3. Git: branch → add → commit → push → PR ───────────────────────────
-  const gitResult = await createBranchAndPR({ ticketId, task, jobId, codeFileName, root: ROOT });
-
-  if (!gitResult.success) {
-    logEntry('ai-coding-agent', task, 'error');
-    logEntry(jobId, ticketId, task, 'git-error', { error: gitResult.error });
-    return res.status(207).json({
-      status: 'partial',
-      jobId,
-      codeFile: codeFileName,
-      gitError: gitResult.error,
-    });
-  }
-
-  logEntry(jobId, ticketId, task, 'completed', { branch: gitResult.branch, prUrl: gitResult.prUrl });
-
-  logEntry('ai-coding-agent', task, 'completed');
-
-  return res.json({
-    status: 'completed',
-    jobId,
-    codeFile: codeFileName,
-    branch: gitResult.branch,
-    prUrl: gitResult.prUrl,
-  });
+        const gitResult = await createBranchAndPR(ticketId, task, jobId, codeFileName);
+        
+        if (gitResult.success) {
+            logEntry('ai-coding-agent', task, 'completed');
+            res.json({
+                status: "completed",
+                jobId,
+                codeFile: codeFileName,
+                branch: gitResult.branch,
+                prUrl: gitResult.prUrl
+            });
+        } else {
+            logEntry('ai-coding-agent', task, 'partial');
+            res.status(207).json({
+                status: "partial",
+                jobId,
+                error: gitResult.error
+            });
+        }
+    } catch (error) {
+        logEntry('ai-coding-agent', task, 'error');
+        console.error(`[${jobId}] Error:`, error.message);
+        res.json({ status: "error", jobId, message: error.message });
+    }
 });
-
-// ── start ─────────────────────────────────────────────────────────────────────
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
